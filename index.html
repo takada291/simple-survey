@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>簡易測量</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex-grow: 1; width: 100%; z-index: 1; }
+        #controls { padding: 10px; background: #f8f9fa; z-index: 1000; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); }
+        .btn { padding: 10px 15px; margin: 5px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; color: #fff; }
+        .btn-blue { background-color: #007bff; }
+        .btn-green { background-color: #28a745; }
+        .btn-red { background-color: #dc3545; }
+        .btn-gray { background-color: #6c757d; }
+        .input-group { margin: 10px 5px; display: flex; align-items: center; }
+        .input-group label { margin-right: 10px; font-weight: bold; }
+        .input-group input { padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; flex-grow: 1; }
+        #status { font-size: 14px; margin-left: 5px; color: #d32f2f; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="controls">
+    <div class="input-group">
+        <label for="siteName">現場名:</label>
+        <input type="text" id="siteName" placeholder="(空白可)">
+    </div>
+    <div>
+        <button class="btn btn-blue" onclick="acquireGPS()">📍 測点取得 (GPS)</button>
+        <button class="btn btn-green" onclick="connectPolygon()">🔗 区域結線</button>
+        <button class="btn btn-red" onclick="resetPoints()">🗑️ リセット</button>
+        <span id="status"></span>
+    </div>
+    <div>
+        <button class="btn btn-gray" onclick="exportData('geojson')">出力 (GeoJSON)</button>
+        <button class="btn btn-gray" onclick="exportData('kml')">出力 (KML)</button>
+        <button class="btn btn-gray" onclick="clearCacheAndReload()" style="float: right; font-size: 12px; padding: 5px 10px;">↻ アプリ更新</button>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // 地図の初期化
+    const map = L.map('map').setView([36.064, 136.219], 13); // 初期位置（福井周辺）
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+        attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+    }).addTo(map);
+
+    let points = [];
+    let markers = [];
+    let polygonLayer = null;
+
+    // GPS取得処理（5回連続取得して平均化）
+    async function acquireGPS() {
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = "取得中...";
+        
+        const readings = [];
+        const maxReadings = 5;
+
+        for (let i = 0; i < maxReadings; i++) {
+            try {
+                const pos = await getPosition();
+                readings.push(pos.coords);
+                statusEl.textContent = `取得中... (${i + 1}/${maxReadings})`;
+                await new Promise(r => setTimeout(r, 1000)); // 1秒間隔
+            } catch (err) {
+                alert('GPSの取得に失敗しました。設定を確認してください。');
+                statusEl.textContent = "";
+                return;
+            }
+        }
+
+        // 平均値の計算
+        const avgLat = readings.reduce((sum, r) => sum + r.latitude, 0) / readings.length;
+        const avgLng = readings.reduce((sum, r) => sum + r.longitude, 0) / readings.length;
+
+        addPoint(avgLat, avgLng);
+        statusEl.textContent = "取得完了";
+        setTimeout(() => statusEl.textContent = "", 2000);
+    }
+
+    function getPosition() {
+        return new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true, timeout: 5000, maximumAge: 0
+            });
+        });
+    }
+
+    function addPoint(lat, lng) {
+        points.push([lat, lng]);
+        const pointNumber = points.length;
+        
+        // マーカーの追加
+        const marker = L.marker([lat, lng]).addTo(map)
+            .bindTooltip(`測点 ${pointNumber}`, { permanent: true, direction: 'right' }).openTooltip();
+        markers.push(marker);
+
+        map.setView([lat, lng], 17);
+    }
+
+    // ポリゴンの結線
+    function connectPolygon() {
+        if (points.length < 3) {
+            alert('区域を作成するには最低3つの測点が必要です。');
+            return;
+        }
+        if (polygonLayer) { map.removeLayer(polygonLayer); }
+        
+        polygonLayer = L.polygon(points, { color: 'red' }).addTo(map);
+        map.fitBounds(polygonLayer.getBounds());
+    }
+
+    function resetPoints() {
+        if (!confirm('全ての測点を削除しますか？')) return;
+        points = [];
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+        if (polygonLayer) { map.removeLayer(polygonLayer); polygonLayer = null; }
+    }
+
+    // ファイル名生成 (YYYYMMDDHHMM_現場名)
+    function generateFileName(extension) {
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const hh = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const siteName = document.getElementById('siteName').value.trim();
+        const namePart = siteName ? `_${siteName}` : '';
+        return `${yyyy}${mm}${dd}${hh}${min}${namePart}.${extension}`;
+    }
+
+    // データ出力
+    function exportData(format) {
+        if (points.length < 3) {
+            alert('出力するには最低3つの測点が必要です。結線も確認してください。');
+            return;
+        }
+
+        // KML/GeoJSONは [経度, 緯度] の順
+        const lngLatPoints = points.map(p => [p[1], p[0]]);
+        // ポリゴンを閉じるため、始点を終点に追加
+        lngLatPoints.push(lngLatPoints[0]);
+
+        let dataStr = "";
+        let mimeType = "";
+
+        if (format === 'geojson') {
+            const geojson = {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "properties": { "name": document.getElementById('siteName').value },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [lngLatPoints]
+                    }
+                }]
+            };
+            dataStr = JSON.stringify(geojson, null, 2);
+            mimeType = "application/geo+json";
+        } else if (format === 'kml') {
+            const coordsStr = lngLatPoints.map(p => `${p[0]},${p[1]},0`).join(' ');
+            const siteName = document.getElementById('siteName').value || '簡易測量区域';
+            dataStr = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${siteName}</name>
+    <Placemark>
+      <name>${siteName}</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>${coordsStr}</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>`;
+            mimeType = "application/vnd.google-earth.kml+xml";
+        }
+
+        const blob = new Blob([dataStr], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = generateFileName(format);
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // PWA: 強制キャッシュクリアとリロード
+    function clearCacheAndReload() {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for(let registration of registrations) {
+                    registration.unregister();
+                }
+            });
+            caches.keys().then(function(names) {
+                for (let name of names) caches.delete(name);
+            }).then(() => {
+                alert('キャッシュをクリアしました。最新版を読み込みます。');
+                window.location.reload(true);
+            });
+        } else {
+            window.location.reload(true);
+        }
+    }
+
+    // Service Workerの登録
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('sw.js');
+        });
+    }
+</script>
+</body>
+</html>
