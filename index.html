@@ -12,14 +12,14 @@
         #controls { padding: 10px; background: #f8f9fa; z-index: 1000; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); }
         .btn { padding: 10px 15px; margin: 5px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; color: #fff; }
         .btn-blue { background-color: #007bff; }
-        .btn-green { background-color: #28a745; }
         .btn-red { background-color: #dc3545; }
         .btn-gray { background-color: #6c757d; }
         .btn-teal { background-color: #17a2b8; }
-        .input-group { margin: 10px 5px; display: flex; align-items: center; }
-        .input-group label { margin-right: 10px; font-weight: bold; }
+        .input-group { margin: 5px; display: flex; align-items: center; }
+        .input-group label { margin-right: 10px; font-weight: bold; font-size: 14px; }
         .input-group input { padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; flex-grow: 1; }
         #status { font-size: 14px; margin-left: 5px; color: #d32f2f; font-weight: bold; }
+        #areaDisplay { font-size: 18px; font-weight: bold; color: #28a745; margin: 5px; }
     </style>
 </head>
 <body>
@@ -28,9 +28,10 @@
 
 <div id="controls">
     <div class="input-group">
-        <label for="siteName">簡易測量v1.1 現場名:</label>
+        <label for="siteName">簡易測量v1.2 現場名:</label>
         <input type="text" id="siteName" placeholder="(空白可)">
     </div>
+    <div id="areaDisplay">面積: 0.00 ha</div>
     <div>
         <button class="btn btn-teal" onclick="locateCurrentPosition()">🌐 現在地</button>
         <button class="btn btn-blue" onclick="acquireGPS()" id="gpsBtn">📍 測点取得 (GPS)</button>
@@ -46,7 +47,6 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // 地図の初期化（初期ロード時は福井周辺、すぐに現在地へ移動）
     const map = L.map('map').setView([36.064, 136.219], 13);
     L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
         attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
@@ -54,23 +54,19 @@
 
     let points = [];
     let markers = [];
-    let drawLayer = null; // 自動結線用のレイヤー(Polyline または Polygon)
+    let drawLayer = null;
     let isAcquiring = false;
 
-    // 起動時に自動で現在地へ移動
     window.addEventListener('load', () => {
         locateCurrentPosition();
     });
 
-    // 現在地表示機能
     function locateCurrentPosition() {
         const statusEl = document.getElementById('status');
         statusEl.textContent = "現在地を取得中...";
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                const lat = pos.coords.latitude;
-                const lng = pos.coords.longitude;
-                map.setView([lat, lng], 17);
+                map.setView([pos.coords.latitude, pos.coords.longitude], 17);
                 statusEl.textContent = "";
             },
             (err) => {
@@ -81,37 +77,48 @@
         );
     }
 
-    // GPS取得処理（iPhone対策として watchPosition を使用して新しいデータを5回待つ）
+    // GPS取得処理（iPhoneキャッシュ対策の強化版・10回取得）
     async function acquireGPS() {
         if (isAcquiring) return;
         isAcquiring = true;
         document.getElementById('gpsBtn').disabled = true;
         
         const statusEl = document.getElementById('status');
-        statusEl.textContent = "GPS補足中...";
+        statusEl.textContent = "GPS初期化中...";
         
         const readings = [];
-        const maxReadings = 5;
+        const maxReadings = 10; // 10回取得へ変更
         let watchId = null;
-        let lastTimestamp = 0;
+        const startTime = Date.now();
+        let lastAcceptedTime = 0;
 
-        // watchPositionによるデータ収集をPromiseでラップ
         const collectData = new Promise((resolve, reject) => {
-            // 20秒経っても集まらない場合はタイムアウト
+            // タイムアウトを40秒に設定
             const timer = setTimeout(() => {
-                if (readings.length > 0) {
-                    resolve(readings); // 取得できた分だけで計算
-                } else {
-                    reject(new Error("タイムアウト"));
-                }
-            }, 20000);
+                if (readings.length > 0) resolve(readings);
+                else reject(new Error("タイムアウト"));
+            }, 40000);
 
             watchId = navigator.geolocation.watchPosition(
                 (pos) => {
-                    // iPhone対策: 同一タイムスタンプのキャッシュデータは無視して新データを待つ
-                    if (pos.timestamp === lastTimestamp) return;
-                    lastTimestamp = pos.timestamp;
+                    const now = Date.now();
 
+                    // ① ウォームアップ: 最初の3秒間はiPhoneの古いキャッシュの可能性が高いため捨てる
+                    if (now - startTime < 3000) {
+                        statusEl.textContent = "キャッシュ破棄中...";
+                        return;
+                    }
+
+                    // ② インターバル: 前回の採用から1秒以上経過していないデータは無視
+                    if (now - lastAcceptedTime < 1000) return;
+
+                    // ③ 精度確認: 誤差が50m以上の荒いデータはスキップ
+                    if (pos.coords.accuracy > 50) {
+                        statusEl.textContent = `精度待機 (${Math.round(pos.coords.accuracy)}m)...`;
+                        return;
+                    }
+
+                    lastAcceptedTime = now;
                     readings.push(pos.coords);
                     statusEl.textContent = `取得中... (${readings.length}/${maxReadings})`;
 
@@ -120,9 +127,7 @@
                         resolve(readings);
                     }
                 },
-                (err) => {
-                    // エラー時は無視して継続するか、収集済みデータで判定
-                },
+                (err) => {},
                 { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
             );
         });
@@ -130,26 +135,19 @@
         try {
             const results = await collectData;
             
-            // 平均値の計算
             const avgLat = results.reduce((sum, r) => sum + r.latitude, 0) / results.length;
             const avgLng = results.reduce((sum, r) => sum + r.longitude, 0) / results.length;
 
-            // 標準偏差の計算（簡易的なメートル換算）
-            // 緯度1度≒111,000m、 経度1度≒89,800m (日本付近・緯度36度基準)
             let sumSqLat = 0;
             let sumSqLng = 0;
             results.forEach(r => {
                 sumSqLat += Math.pow((r.latitude - avgLat) * 111000, 2);
                 sumSqLng += Math.pow((r.longitude - avgLng) * 89800, 2);
             });
-            const stdDevLat = Math.sqrt(sumSqLat / results.length);
-            const stdDevLng = Math.sqrt(sumSqLng / results.length);
-            // 平面上の総合的なばらつき（距離の標準偏差目安）
-            const stdDevTotal = Math.sqrt(Math.pow(stdDevLat, 2) + Math.pow(stdDevLng, 2));
+            const stdDevTotal = Math.sqrt((sumSqLat / results.length) + (sumSqLng / results.length));
 
             statusEl.textContent = "判定中...";
             
-            // ユーザーに標準偏差を表示して採用確認
             setTimeout(() => {
                 const confirmMsg = `【測点 ${points.length + 1}】\n取得回数: ${results.length} 回\n標準偏差(ばらつき): 約 ${stdDevTotal.toFixed(1)} m\n\nこの測点を採用しますか？`;
                 if (confirm(confirmMsg)) {
@@ -165,9 +163,7 @@
             alert('GPSデータの収集に失敗しました。空がひらけた場所で再試行してください。');
             statusEl.textContent = "";
         } finally {
-            if (watchId !== null) {
-                navigator.geolocation.clearWatch(watchId);
-            }
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
             isAcquiring = false;
             document.getElementById('gpsBtn').disabled = false;
         }
@@ -177,30 +173,48 @@
         points.push([lat, lng]);
         const pointNumber = points.length;
         
-        // マーカーの追加
         const marker = L.marker([lat, lng]).addTo(map)
             .bindTooltip(`測点 ${pointNumber}`, { permanent: true, direction: 'right' }).openTooltip();
         markers.push(marker);
 
         map.setView([lat, lng], 17);
-        
-        // 自動結線ロジックの呼び出し
         updateDrawing();
     }
 
-    // 自動結線処理（測点数に応じてラインかポリゴンを描画）
+    // 球面面積の計算 (平方メートルを算出し、haへ換算)
+    function calculateArea(latLngs) {
+        if (latLngs.length < 3) return 0;
+        let area = 0;
+        const R = 6378137; // 地球の半径 (m)
+        const d2r = Math.PI / 180;
+
+        for (let i = 0; i < latLngs.length; i++) {
+            const p1 = latLngs[i];
+            const p2 = latLngs[(i + 1) % latLngs.length];
+            area += (p2[1] - p1[1]) * d2r * (2 + Math.sin(p1[0] * d2r) + Math.sin(p2[0] * d2r));
+        }
+        area = Math.abs(area * R * R / 2.0);
+        return area / 10000; // m2 から ha に変換
+    }
+
     function updateDrawing() {
         if (drawLayer) {
             map.removeLayer(drawLayer);
             drawLayer = null;
         }
 
+        const areaDisplay = document.getElementById('areaDisplay');
+
         if (points.length === 2) {
-            // 2点の場合はライン（線）を表示
             drawLayer = L.polyline(points, { color: 'red', weight: 3 }).addTo(map);
+            areaDisplay.textContent = "面積: 0.00 ha";
         } else if (points.length >= 3) {
-            // 3点以上の場合は自動的に閉じた区域（ポリゴン）を表示
             drawLayer = L.polygon(points, { color: 'red', weight: 3, fillColor: '#ff0000', fillOpacity: 0.2 }).addTo(map);
+            // 面積計算と表示更新
+            const ha = calculateArea(points);
+            areaDisplay.textContent = `面積: ${ha.toFixed(2)} ha`;
+        } else {
+            areaDisplay.textContent = "面積: 0.00 ha";
         }
     }
 
@@ -210,9 +224,9 @@
         markers.forEach(m => map.removeLayer(m));
         markers = [];
         if (drawLayer) { map.removeLayer(drawLayer); drawLayer = null; }
+        document.getElementById('areaDisplay').textContent = "面積: 0.00 ha";
     }
 
-    // ファイル名生成 (YYYYMMDDHHMM_現場名)
     function generateFileName(extension) {
         const now = new Date();
         const yyyy = now.getFullYear();
@@ -225,16 +239,14 @@
         return `${yyyy}${mm}${dd}${hh}${min}${namePart}.${extension}`;
     }
 
-    // データ出力（Google Earth対応強化版）
     function exportData(format) {
         if (points.length < 3) {
             alert('区域を出力するには最低3つの測点が必要です。');
             return;
         }
 
-        // KML/GeoJSONは [経度, 緯度] の順
         const lngLatPoints = points.map(p => [p[1], p[0]]);
-        lngLatPoints.push(lngLatPoints[0]); // ポリゴンを閉じる
+        lngLatPoints.push(lngLatPoints[0]);
 
         let dataStr = "";
         let mimeType = "";
@@ -244,7 +256,10 @@
                 "type": "FeatureCollection",
                 "features": [{
                     "type": "Feature",
-                    "properties": { "name": document.getElementById('siteName').value },
+                    "properties": { 
+                        "name": document.getElementById('siteName').value,
+                        "area_ha": parseFloat(calculateArea(points).toFixed(2))
+                    },
                     "geometry": {
                         "type": "Polygon",
                         "coordinates": [lngLatPoints]
@@ -256,29 +271,23 @@
         } else if (format === 'kml') {
             const coordsStr = lngLatPoints.map(p => `${p[0]},${p[1]},0`).join(' ');
             const siteName = document.getElementById('siteName').value || '簡易測量区域';
+            const areaHa = calculateArea(points).toFixed(2);
             
-            // Google Earthで確実に表示させるためのスタイル定義を追加
             dataStr = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>${siteName}</name>
     <Style id="surveyAreaStyle">
-      <LineStyle>
-        <color>ff0000ff</color> <width>3</width>
-      </LineStyle>
-      <PolyStyle>
-        <color>330000ff</color> </PolyStyle>
+      <LineStyle><color>ff0000ff</color><width>3</width></LineStyle>
+      <PolyStyle><color>330000ff</color></PolyStyle>
     </Style>
     <Placemark>
-      <name>${siteName}</name>
+      <name>${siteName} (${areaHa} ha)</name>
+      <description>面積: ${areaHa} ha</description>
       <styleUrl>#surveyAreaStyle</styleUrl>
       <Polygon>
         <tessellate>1</tessellate>
-        <outerBoundaryIs>
-          <LinearRing>
-            <coordinates>${coordsStr}</coordinates>
-          </LinearRing>
-        </outerBoundaryIs>
+        <outerBoundaryIs><LinearRing><coordinates>${coordsStr}</coordinates></LinearRing></outerBoundaryIs>
       </Polygon>
     </Placemark>
   </Document>
@@ -295,13 +304,10 @@
         URL.revokeObjectURL(url);
     }
 
-    // PWA: 強制キャッシュクリアとリロード
     function clearCacheAndReload() {
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                for(let registration of registrations) {
-                    registration.unregister();
-                }
+                for(let registration of registrations) registration.unregister();
             });
             caches.keys().then(function(names) {
                 for (let name of names) caches.delete(name);
@@ -314,7 +320,6 @@
         }
     }
 
-    // Service Workerの登録
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('sw.js');
