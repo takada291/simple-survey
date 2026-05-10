@@ -7,41 +7,74 @@
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background-color: #f8f9fa; }
+        
+        /* 縦画面デフォルト: 地図が上、パネルが下 */
+        #main-container { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
         #map { flex-grow: 1; width: 100%; z-index: 1; }
-        #controls { padding: 10px; background: #f8f9fa; z-index: 1000; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); }
-        .btn { padding: 10px 15px; margin: 5px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; color: #fff; }
-        .btn-blue { background-color: #007bff; }
+        
+        /* コントロールパネルの基本スタイリング */
+        #controls { padding: 12px; background: #ffffff; z-index: 1000; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+        
+        /* 情報表示エリア（スクショ図面用ヘッダー） */
+        .info-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: #f1f3f5; padding: 8px 12px; border-radius: 6px; border-left: 4px solid #007bff; }
+        .input-group { display: flex; align-items: center; flex-grow: 1; min-width: 200px; }
+        .input-group label { margin-right: 8px; font-weight: bold; font-size: 14px; color: #343a40; white-space: nowrap; }
+        .input-group input { padding: 6px 10px; font-size: 15px; border: 1px solid #ced4da; border-radius: 4px; flex-grow: 1; background: #fff; }
+        #areaDisplay { font-size: 18px; font-weight: bold; color: #28a745; white-space: nowrap; }
+        
+        /* ボタン列の整列レイアウト */
+        .btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .btn { flex: 1 1 calc(33.333% - 8px); min-width: 90px; padding: 10px; font-size: 15px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; color: #fff; text-align: center; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 4px; }
+        .btn:active { opacity: 0.8; }
+        .btn:disabled { background-color: #adb5bd !important; cursor: not-allowed; }
+        
+        /* ボタンカラー */
+        .btn-teal { background-color: #17a2b8; }
+        .btn-blue { background-color: #007bff; flex: 2 1 calc(50% - 8px); /* 測点取得ボタンを少し広めに強調 */ }
         .btn-red { background-color: #dc3545; }
         .btn-gray { background-color: #6c757d; }
-        .btn-teal { background-color: #17a2b8; }
-        .input-group { margin: 5px; display: flex; align-items: center; }
-        .input-group label { margin-right: 10px; font-weight: bold; font-size: 14px; }
-        .input-group input { padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; flex-grow: 1; }
-        #status { font-size: 14px; margin-left: 5px; color: #d32f2f; font-weight: bold; }
-        #areaDisplay { font-size: 18px; font-weight: bold; color: #28a745; margin: 5px; }
+        .btn-update { background-color: #343a40; flex: 0 1 auto; font-size: 12px; padding: 8px 12px; }
+        
+        #status { font-size: 14px; color: #d32f2f; font-weight: bold; text-align: center; min-height: 20px; }
+
+        /* 横画面（ランドスケープ）時の最適化: 地図が左、パネルが右 */
+        @media (orientation: landscape) {
+            #main-container { flex-direction: row; }
+            #controls { width: 340px; height: 100vh; box-shadow: -2px 0 10px rgba(0,0,0,0.1); justify-content: flex-start; }
+            .btn { flex: 1 1 calc(50% - 8px); /* 横画面のサイドバー内では2列ベースに再配列 */ }
+            .btn-blue { flex: 1 1 100%; /* 測点取得は1列全幅 */ }
+        }
     </style>
 </head>
 <body>
 
-<div id="map"></div>
+<div id="main-container">
+    <div id="map"></div>
 
-<div id="controls">
-    <div class="input-group">
-        <label for="siteName">簡易測量v1.2 現場名:</label>
-        <input type="text" id="siteName" placeholder="(空白可)">
-    </div>
-    <div id="areaDisplay">面積: 0.00 ha</div>
-    <div>
-        <button class="btn btn-teal" onclick="locateCurrentPosition()">🌐 現在地</button>
-        <button class="btn btn-blue" onclick="acquireGPS()" id="gpsBtn">📍 測点取得 (GPS)</button>
-        <button class="btn btn-red" onclick="resetPoints()">🗑️ リセット</button>
-        <span id="status"></span>
-    </div>
-    <div>
-        <button class="btn btn-gray" onclick="exportData('geojson')">出力 (GeoJSON)</button>
-        <button class="btn btn-gray" onclick="exportData('kml')">出力 (KML)</button>
-        <button class="btn btn-gray" onclick="clearCacheAndReload()" style="float: right; font-size: 12px; padding: 5px 10px;">↻ アプリ更新</button>
+    <div id="controls">
+        <div class="info-panel">
+            <div class="input-group">
+                <label for="siteName">簡易測量v1.3 現場名:</label>
+                <input type="text" id="siteName" placeholder="簡易測量v1.3 (空白可)">
+            </div>
+            <div id="areaDisplay">面積: 0.00 ha</div>
+        </div>
+
+        <div id="status"></div>
+
+        <div class="btn-row">
+            <button class="btn btn-teal" onclick="locateCurrentPosition()">🌐 現在地</button>
+            <button class="btn btn-blue" onclick="acquireGPS()" id="gpsBtn">📍 測点取得 (GPS)</button>
+            <button class="btn btn-red" onclick="resetPoints()">🗑️ リセット</button>
+        </div>
+
+        <div class="btn-row" style="margin-top: auto;">
+            <button class="btn btn-gray" onclick="exportData('geojson')">出力(GeoJSON)</button>
+            <button class="btn btn-gray" onclick="exportData('kml')">出力(KML)</button>
+            <button class="btn btn-update" onclick="clearCacheAndReload()" title="アプリを最新版に強制更新">↻ 更新</button>
+        </div>
     </div>
 </div>
 
@@ -77,7 +110,7 @@
         );
     }
 
-    // GPS取得処理（iPhoneキャッシュ対策の強化版・10回取得）
+    // GPS取得処理（v1.2の4重フィルター高精度ロジック完全維持）
     async function acquireGPS() {
         if (isAcquiring) return;
         isAcquiring = true;
@@ -87,13 +120,12 @@
         statusEl.textContent = "GPS初期化中...";
         
         const readings = [];
-        const maxReadings = 10; // 10回取得へ変更
+        const maxReadings = 10;
         let watchId = null;
         const startTime = Date.now();
         let lastAcceptedTime = 0;
 
         const collectData = new Promise((resolve, reject) => {
-            // タイムアウトを40秒に設定
             const timer = setTimeout(() => {
                 if (readings.length > 0) resolve(readings);
                 else reject(new Error("タイムアウト"));
@@ -103,16 +135,13 @@
                 (pos) => {
                     const now = Date.now();
 
-                    // ① ウォームアップ: 最初の3秒間はiPhoneの古いキャッシュの可能性が高いため捨てる
                     if (now - startTime < 3000) {
                         statusEl.textContent = "キャッシュ破棄中...";
                         return;
                     }
 
-                    // ② インターバル: 前回の採用から1秒以上経過していないデータは無視
                     if (now - lastAcceptedTime < 1000) return;
 
-                    // ③ 精度確認: 誤差が50m以上の荒いデータはスキップ
                     if (pos.coords.accuracy > 50) {
                         statusEl.textContent = `精度待機 (${Math.round(pos.coords.accuracy)}m)...`;
                         return;
@@ -181,11 +210,10 @@
         updateDrawing();
     }
 
-    // 球面面積の計算 (平方メートルを算出し、haへ換算)
     function calculateArea(latLngs) {
         if (latLngs.length < 3) return 0;
         let area = 0;
-        const R = 6378137; // 地球の半径 (m)
+        const R = 6378137;
         const d2r = Math.PI / 180;
 
         for (let i = 0; i < latLngs.length; i++) {
@@ -194,7 +222,7 @@
             area += (p2[1] - p1[1]) * d2r * (2 + Math.sin(p1[0] * d2r) + Math.sin(p2[0] * d2r));
         }
         area = Math.abs(area * R * R / 2.0);
-        return area / 10000; // m2 から ha に変換
+        return area / 10000;
     }
 
     function updateDrawing() {
@@ -210,7 +238,6 @@
             areaDisplay.textContent = "面積: 0.00 ha";
         } else if (points.length >= 3) {
             drawLayer = L.polygon(points, { color: 'red', weight: 3, fillColor: '#ff0000', fillOpacity: 0.2 }).addTo(map);
-            // 面積計算と表示更新
             const ha = calculateArea(points);
             areaDisplay.textContent = `面積: ${ha.toFixed(2)} ha`;
         } else {
