@@ -1,4 +1,4 @@
-const CACHE_NAME = 'simple-survey-v1.4';
+const CACHE_NAME = 'simple-survey-v1.5';
 const ASSETS = [
     './',
     './index.html',
@@ -37,8 +37,8 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
     const requestUrl = new URL(event.request.url);
 
-    // 地理院地図タイルなどの画像リクエストを動的にキャッシュ
-    if (requestUrl.hostname.includes('cyberjapandata.gsi.go.jp')) {
+    // 地理院地図タイルとOpenStreetMapの画像リクエストを動的にキャッシュ
+    if (requestUrl.hostname.includes('cyberjapandata.gsi.go.jp') || requestUrl.hostname.includes('openstreetmap.org')) {
         event.respondWith(
             caches.match(event.request).then((cachedResponse) => {
                 if (cachedResponse) return cachedResponse;
