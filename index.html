@@ -51,7 +51,7 @@
         <div class="info-panel">
             <div class="input-group">
                 <label for="siteName">現場名:</label>
-                <input type="text" id="siteName" placeholder="簡易測量v1.4 (空白可)">
+                <input type="text" id="siteName" placeholder="簡易測量v1.5 (空白可)">
             </div>
             <div id="areaDisplay">面積: 0.00 ha</div>
         </div>
@@ -74,10 +74,34 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    const map = L.map('map').setView([36.064, 136.219], 13);
-    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
-        attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
-    }).addTo(map);
+    // --- 背景図のレイヤー定義 ---
+    const gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+        attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>",
+        maxZoom: 18
+    });
+
+    const gsiOrtho = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort/{z}/{x}/{y}.jpg', {
+        attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル (オルソ)</a>",
+        maxZoom: 18
+    });
+
+    const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a>",
+        maxZoom: 19
+    });
+
+    // マップの初期化（初期レイヤーは地理院地図の標準）
+    const map = L.map('map', {
+        layers: [gsiStd]
+    }).setView([36.064, 136.219], 13);
+
+    // 背景図切替コントロールを右上に配置
+    const baseMaps = {
+        "地理院地図 (標準)": gsiStd,
+        "地理院地図 (オルソ)": gsiOrtho,
+        "OpenStreetMap": osm
+    };
+    L.control.layers(baseMaps, {}, { position: 'topright' }).addTo(map);
 
     let points = [];
     let markers = [];
@@ -259,7 +283,6 @@
         return `${yyyy}${mm}${dd}${hh}${min}${namePart}.${extension}`;
     }
 
-    // 出力機能を「区域ポリゴン＋各測点のポイント＆番号」の同時出力に強化
     function exportData(format) {
         if (points.length < 3) {
             alert('区域を出力するには最低3つの測点が必要です。');
@@ -270,7 +293,6 @@
         const siteName = siteNameInput || '簡易測量区域';
         const areaHa = parseFloat(calculateArea(points).toFixed(2));
 
-        // 経度・緯度の配列化
         const lngLatPoints = points.map(p => [p[1], p[0]]);
         const closedLngLatPoints = [...lngLatPoints, lngLatPoints[0]];
 
@@ -278,7 +300,6 @@
         let mimeType = "";
 
         if (format === 'geojson') {
-            // ① 区域ポリゴンのFeatureを作成
             const features = [{
                 "type": "Feature",
                 "properties": { 
@@ -292,7 +313,6 @@
                 }
             }];
 
-            // ② 各測点ポイントのFeatureを作成して配列に追加
             points.forEach((p, idx) => {
                 const ptNum = idx + 1;
                 features.push({
@@ -304,7 +324,7 @@
                     },
                     "geometry": {
                         "type": "Point",
-                        "coordinates": [p[1], p[0]] // [経度, 緯度]
+                        "coordinates": [p[1], p[0]]
                     }
                 });
             });
@@ -319,7 +339,6 @@
         } else if (format === 'kml') {
             const polygonCoordsStr = closedLngLatPoints.map(p => `${p[0]},${p[1]},0`).join(' ');
             
-            // 各測点のKML Placemarkタグを生成
             let pointsKml = "";
             points.forEach((p, idx) => {
                 const ptNum = idx + 1;
