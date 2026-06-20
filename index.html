@@ -6,6 +6,17 @@
     <title>簡易測量</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-WXBP6CPKLP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      // ここも測定IDに書き換えます
+      gtag('config', 'G-WXBP6CPKLP');
+    </script>
+    
     <style>
         *, *::before, *::after { box-sizing: border-box; }
         body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background-color: #f8f9fa; }
